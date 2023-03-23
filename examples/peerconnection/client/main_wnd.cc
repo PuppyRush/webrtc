@@ -69,13 +69,15 @@ MainWnd::MainWnd(const char* server,
                  int port,
                  bool auto_connect,
                  bool auto_call)
-    : ui_(CONNECT_TO_SERVER),
+    : ui_(UI::MAIN),
       wnd_(NULL),
       edit1_(NULL),
       edit2_(NULL),
+      edit_roomNumber_(nullptr),
       label1_(NULL),
       label2_(NULL),
-      button_(NULL),
+      join_button_(NULL),
+      create_button_(NULL),
       listbox_(NULL),
       destroyed_(false),
       nested_msg_(NULL),
@@ -141,7 +143,7 @@ bool MainWnd::PreTranslateMessage(MSG* msg) {
       ret = true;
     } else if (msg->wParam == VK_ESCAPE) {
       if (callback_) {
-        if (ui_ == STREAMING) {
+        if (ui_ == UI::STREAMING) {
           callback_->DisconnectFromCurrentPeer();
         } else {
           callback_->DisconnectFromServer();
@@ -159,46 +161,46 @@ bool MainWnd::PreTranslateMessage(MSG* msg) {
 void MainWnd::SwitchToConnectUI() {
   RTC_DCHECK(IsWindow());
   LayoutPeerListUI(false);
-  ui_ = CONNECT_TO_SERVER;
+  ui_ = UI::JOIN_ROOM;
   LayoutConnectUI(true);
   ::SetFocus(edit1_);
 
   if (auto_connect_)
-    ::PostMessage(button_, BM_CLICK, 0, 0);
+    ::PostMessage(join_button_, BM_CLICK, 0, 0);
 }
 
-void MainWnd::SwitchToPeerList(const Peers& peers) {
-  LayoutConnectUI(false);
-
-  ::SendMessage(listbox_, LB_RESETCONTENT, 0, 0);
-
-  AddListBoxItem(listbox_, "List of currently connected peers:", -1);
-  Peers::const_iterator i = peers.begin();
-  for (; i != peers.end(); ++i)
-    AddListBoxItem(listbox_, i->second.c_str(), i->first);
-
-  ui_ = LIST_PEERS;
-  LayoutPeerListUI(true);
-  ::SetFocus(listbox_);
-
-  if (auto_call_ && peers.begin() != peers.end()) {
-    // Get the number of items in the list
-    LRESULT count = ::SendMessage(listbox_, LB_GETCOUNT, 0, 0);
-    if (count != LB_ERR) {
-      // Select the last item in the list
-      LRESULT selection = ::SendMessage(listbox_, LB_SETCURSEL, count - 1, 0);
-      if (selection != LB_ERR)
-        ::PostMessage(wnd_, WM_COMMAND,
-                      MAKEWPARAM(GetDlgCtrlID(listbox_), LBN_DBLCLK),
-                      reinterpret_cast<LPARAM>(listbox_));
-    }
-  }
-}
+//void MainWnd::SwitchToPeerList(const Peers& peers) {
+//  LayoutConnectUI(false);
+//
+//  ::SendMessage(listbox_, LB_RESETCONTENT, 0, 0);
+//
+//  AddListBoxItem(listbox_, "List of currently connected peers:", -1);
+//  Peers::const_iterator i = peers.begin();
+//  for (; i != peers.end(); ++i)
+//    AddListBoxItem(listbox_, i->second.c_str(), i->first);
+//
+//  ui_ = LIST_PEERS;
+//  LayoutPeerListUI(true);
+//  ::SetFocus(listbox_);
+//
+//  if (auto_call_ && peers.begin() != peers.end()) {
+//    // Get the number of items in the list
+//    LRESULT count = ::SendMessage(listbox_, LB_GETCOUNT, 0, 0);
+//    if (count != LB_ERR) {
+//      // Select the last item in the list
+//      LRESULT selection = ::SendMessage(listbox_, LB_SETCURSEL, count - 1, 0);
+//      if (selection != LB_ERR)
+//        ::PostMessage(wnd_, WM_COMMAND,
+//                      MAKEWPARAM(GetDlgCtrlID(listbox_), LBN_DBLCLK),
+//                      reinterpret_cast<LPARAM>(listbox_));
+//    }
+//  }
+//}
 
 void MainWnd::SwitchToStreamingUI() {
   LayoutConnectUI(false);
   LayoutPeerListUI(false);
-  ui_ = STREAMING;
+  ui_ = UI::STREAMING;
 }
 
 void MainWnd::MessageBox(const char* caption, const char* text, bool is_error) {
@@ -209,18 +211,16 @@ void MainWnd::MessageBox(const char* caption, const char* text, bool is_error) {
   ::MessageBoxA(handle(), text, caption, flags);
 }
 
+
 void MainWnd::StartLocalRenderer(webrtc::VideoTrackInterface* local_video) {
   local_renderer_.reset(new VideoRenderer(handle(), 1, 1, local_video));
 }
-
 void MainWnd::StopLocalRenderer() {
   local_renderer_.reset();
 }
-
 void MainWnd::StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) {
   remote_renderer_.reset(new VideoRenderer(handle(), 1, 1, remote_video));
 }
-
 void MainWnd::StopRemoteRenderer() {
   remote_renderer_.reset();
 }
@@ -238,9 +238,10 @@ void MainWnd::OnPaint() {
   RECT rc;
   ::GetClientRect(handle(), &rc);
 
-  VideoRenderer* local_renderer = local_renderer_.get();
+  //VideoRenderer* local_renderer = local_renderer_.get();
+  VideoRenderer* local_renderer = remote_renderer_.get();
   VideoRenderer* remote_renderer = remote_renderer_.get();
-  if (ui_ == STREAMING && remote_renderer && local_renderer) {
+  if (ui_ == UI::STREAMING && remote_renderer && local_renderer) {
     AutoLock<VideoRenderer> local_lock(local_renderer);
     AutoLock<VideoRenderer> remote_lock(remote_renderer);
 
@@ -333,20 +334,25 @@ void MainWnd::OnDestroyed() {
 void MainWnd::OnDefaultAction() {
   if (!callback_)
     return;
-  if (ui_ == CONNECT_TO_SERVER) {
-    std::string server(GetWindowText(edit1_));
-    std::string port_str(GetWindowText(edit2_));
-    int port = port_str.length() ? atoi(port_str.c_str()) : 0;
-    callback_->StartLogin(server, port);
-  } else if (ui_ == LIST_PEERS) {
+  std::string server(GetWindowText(edit1_));
+  std::string port_str(GetWindowText(edit2_));
+  int port = port_str.length() ? atoi(port_str.c_str()) : 0;
+  callback_->StartLogin(server, port);
+  
+  if (ui_ == UI::JOIN_ROOM) {
+  } 
+  else if (ui_ == UI::CREATE_ROOM) {
+  }
+  /*else if (ui_ == LIST_PEERS) {
     LRESULT sel = ::SendMessage(listbox_, LB_GETCURSEL, 0, 0);
     if (sel != LB_ERR) {
       LRESULT peer_id = ::SendMessage(listbox_, LB_GETITEMDATA, sel, 0);
       if (peer_id != -1 && callback_) {
-        callback_->ConnectToPeer(peer_id);
+        callback_->CreateInvate(peer_id);
       }
     }
-  } else {
+  } */
+  else {
     ::MessageBoxA(wnd_, "OK!", "Yeah", MB_OK);
   }
 }
@@ -362,19 +368,21 @@ bool MainWnd::OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result) {
       return true;
 
     case WM_SETFOCUS:
-      if (ui_ == CONNECT_TO_SERVER) {
+      if (ui_ == UI::JOIN_ROOM) {
         SetFocus(edit1_);
-      } else if (ui_ == LIST_PEERS) {
+      } 
+      /*else if (ui_ == UI::LIST_PEERS) {
         SetFocus(listbox_);
-      }
+      }*/
       return true;
 
     case WM_SIZE:
-      if (ui_ == CONNECT_TO_SERVER) {
+      if (ui_ == UI::JOIN_ROOM) {
         LayoutConnectUI(true);
-      } else if (ui_ == LIST_PEERS) {
+      } 
+      /*else if (ui_ == LIST_PEERS) {
         LayoutPeerListUI(true);
-      }
+      }*/
       break;
 
     case WM_CTLCOLORSTATIC:
@@ -382,14 +390,19 @@ bool MainWnd::OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result) {
       return true;
 
     case WM_COMMAND:
-      if (button_ == reinterpret_cast<HWND>(lp)) {
+      if (join_button_ == reinterpret_cast<HWND>(lp)) {
         if (BN_CLICKED == HIWORD(wp))
           OnDefaultAction();
-      } else if (listbox_ == reinterpret_cast<HWND>(lp)) {
+      } 
+      if (create_button_ == reinterpret_cast<HWND>(lp)) {
+        if (BN_CLICKED == HIWORD(wp))
+          OnDefaultAction();
+      }
+      /*else if (listbox_ == reinterpret_cast<HWND>(lp)) {
         if (LBN_DBLCLK == HIWORD(wp)) {
           OnDefaultAction();
         }
-      }
+      }*/
       return true;
 
     case WM_CLOSE:
@@ -480,7 +493,10 @@ void MainWnd::CreateChildWindows() {
   CreateChildWindow(&label2_, LABEL2_ID, L"Static", ES_CENTER | ES_READONLY, 0);
   CreateChildWindow(&edit2_, EDIT_ID, L"Edit",
                     ES_LEFT | ES_NOHIDESEL | WS_TABSTOP, WS_EX_CLIENTEDGE);
-  CreateChildWindow(&button_, BUTTON_ID, L"Button", BS_CENTER | WS_TABSTOP, 0);
+  CreateChildWindow(&edit_roomNumber_, EDIT_ID, L"Edit",
+                    ES_LEFT | ES_NOHIDESEL | WS_TABSTOP, WS_EX_CLIENTEDGE);
+  CreateChildWindow(&join_button_, BUTTON_ID, L"Button", BS_CENTER | WS_TABSTOP, 0);
+  CreateChildWindow(&create_button_, BUTTON_ID, L"Button", BS_CENTER | WS_TABSTOP, 0);
 
   CreateChildWindow(&listbox_, LISTBOX_ID, L"ListBox",
                     LBS_HASSTRINGS | LBS_NOTIFY, WS_EX_CLIENTEDGE);
@@ -498,7 +514,8 @@ void MainWnd::LayoutConnectUI(bool show) {
   } windows[] = {
       {label1_, L"Server"},  {edit1_, L"XXXyyyYYYgggXXXyyyYYYggg"},
       {label2_, L":"},       {edit2_, L"XyXyX"},
-      {button_, L"Connect"},
+      {edit_roomNumber_, L"XyXyX"},
+      {join_button_, L"Connect"}, {create_button_, L"Create"},
   };
 
   if (show) {
@@ -570,7 +587,7 @@ void MainWnd::HandleTabbing() {
 
 //
 // MainWnd::VideoRenderer
-//
+
 
 MainWnd::VideoRenderer::VideoRenderer(
     HWND wnd,
@@ -598,11 +615,9 @@ MainWnd::VideoRenderer::~VideoRenderer() {
 
 void MainWnd::VideoRenderer::SetSize(int width, int height) {
   AutoLock<VideoRenderer> lock(this);
-
   if (width == bmi_.bmiHeader.biWidth && height == bmi_.bmiHeader.biHeight) {
     return;
   }
-
   bmi_.bmiHeader.biWidth = width;
   bmi_.bmiHeader.biHeight = -height;
   bmi_.bmiHeader.biSizeImage =
@@ -613,15 +628,12 @@ void MainWnd::VideoRenderer::SetSize(int width, int height) {
 void MainWnd::VideoRenderer::OnFrame(const webrtc::VideoFrame& video_frame) {
   {
     AutoLock<VideoRenderer> lock(this);
-
     rtc::scoped_refptr<webrtc::I420BufferInterface> buffer(
         video_frame.video_frame_buffer()->ToI420());
     if (video_frame.rotation() != webrtc::kVideoRotation_0) {
       buffer = webrtc::I420Buffer::Rotate(*buffer, video_frame.rotation());
     }
-
     SetSize(buffer->width(), buffer->height());
-
     RTC_DCHECK(image_.get() != NULL);
     libyuv::I420ToARGB(buffer->DataY(), buffer->StrideY(), buffer->DataU(),
                        buffer->StrideU(), buffer->DataV(), buffer->StrideV(),

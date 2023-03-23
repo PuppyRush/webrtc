@@ -115,6 +115,7 @@ bool DataSocket::OnDataAvailable(bool* close_socket) {
 }
 
 bool DataSocket::Send(const std::string& data) const {
+  printf("send ------>\nn%s\n<--------\n", data.c_str());
   return send(socket_, data.data(), static_cast<int>(data.length()), 0) !=
          SOCKET_ERROR;
 }

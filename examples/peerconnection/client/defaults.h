@@ -13,7 +13,13 @@
 
 #include <stdint.h>
 
+#include <rtc_base/logging.h>
+
 #include <string>
+#include <iostream>
+#include <fstream>
+
+
 
 extern const char kAudioLabel[];
 extern const char kVideoLabel[];
@@ -25,5 +31,18 @@ std::string GetEnvVarOrDefault(const char* env_var_name,
 std::string GetPeerConnectionString();
 std::string GetDefaultServerName();
 std::string GetPeerName();
+
+class CustomnLogSink : public rtc::LogSink {
+ public:
+  CustomnLogSink(const std::string& filepath) { m_stream.open(filepath); }
+
+ public:
+  void OnLogMessage(const std::string& message) override {
+    m_stream << message;
+  }
+
+ private:
+  std::ofstream m_stream;
+};
 
 #endif  // EXAMPLES_PEERCONNECTION_CLIENT_DEFAULTS_H_

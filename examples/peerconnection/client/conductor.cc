@@ -16,6 +16,8 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <map>
+#include <random>
 
 #include "absl/memory/memory.h"
 #include "absl/types/optional.h"
@@ -26,23 +28,37 @@
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/audio_options.h"
 #include "api/create_peerconnection_factory.h"
+#include "api/media_stream_interface.h"
 #include "api/rtp_sender_interface.h"
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_encoder_factory.h"
 #include "examples/peerconnection/client/defaults.h"
+#include "media/base/adapted_video_track_source.h"
+#include "media/engine/multiplex_codec_factory.h"
+#include "media/engine/internal_decoder_factory.h"
 #include "modules/audio_device/include/audio_device.h"
 #include "modules/audio_processing/include/audio_processing.h"
 #include "modules/video_capture/video_capture.h"
 #include "modules/video_capture/video_capture_factory.h"
 #include "p2p/base/port_allocator.h"
+#include "pc/media_stream.h"
 #include "pc/video_track_source.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/rtc_certificate_generator.h"
 #include "rtc_base/strings/json.h"
 #include "test/vcm_capturer.h"
+
+#include "modules/desktop_capture/desktop_capturer.h"
+#include "modules/desktop_capture/desktop_capture_options.h"
+#include "modules/desktop_capture/desktop_and_cursor_composer.h"
+
+#include "wrapper/inc/windowcapturer.h"
+#include "wrapper/inc/CapturerFactory.h"
+
+#include "common.h"
 
 namespace {
 // Names used for a IceCandidate JSON object.
@@ -67,46 +83,11 @@ class DummySetSessionDescriptionObserver
   }
 };
 
-class CapturerTrackSource : public webrtc::VideoTrackSource {
- public:
-  static rtc::scoped_refptr<CapturerTrackSource> Create() {
-    const size_t kWidth = 640;
-    const size_t kHeight = 480;
-    const size_t kFps = 30;
-    std::unique_ptr<webrtc::test::VcmCapturer> capturer;
-    std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
-        webrtc::VideoCaptureFactory::CreateDeviceInfo());
-    if (!info) {
-      return nullptr;
-    }
-    int num_devices = info->NumberOfDevices();
-    for (int i = 0; i < num_devices; ++i) {
-      capturer = absl::WrapUnique(
-          webrtc::test::VcmCapturer::Create(kWidth, kHeight, kFps, i));
-      if (capturer) {
-        return rtc::make_ref_counted<CapturerTrackSource>(std::move(capturer));
-      }
-    }
-
-    return nullptr;
-  }
-
- protected:
-  explicit CapturerTrackSource(
-      std::unique_ptr<webrtc::test::VcmCapturer> capturer)
-      : VideoTrackSource(/*remote=*/false), capturer_(std::move(capturer)) {}
-
- private:
-  rtc::VideoSourceInterface<webrtc::VideoFrame>* source() override {
-    return capturer_.get();
-  }
-  std::unique_ptr<webrtc::test::VcmCapturer> capturer_;
-};
 
 }  // namespace
 
 Conductor::Conductor(PeerConnectionClient* client, MainWindow* main_wnd)
-    : peer_id_(-1), loopback_(false), client_(client), main_wnd_(main_wnd) {
+  : loopback_(false), client_(client), main_wnd_(main_wnd) {
   client_->RegisterObserver(this);
   main_wnd->RegisterObserver(this);
 }
@@ -120,7 +101,7 @@ bool Conductor::connection_active() const {
 }
 
 void Conductor::Close() {
-  client_->SignOut();
+  //client_->SignOut();
   DeletePeerConnection();
 }
 
@@ -204,14 +185,13 @@ void Conductor::DeletePeerConnection() {
   main_wnd_->StopRemoteRenderer();
   peer_connection_ = nullptr;
   peer_connection_factory_ = nullptr;
-  peer_id_ = -1;
   loopback_ = false;
 }
 
 void Conductor::EnsureStreamingUI() {
   RTC_DCHECK(peer_connection_);
   if (main_wnd_->IsWindow()) {
-    if (main_wnd_->current_ui() != MainWindow::STREAMING)
+    if (main_wnd_->current_ui() != MainWindow::UI::STREAMING)
       main_wnd_->SwitchToStreamingUI();
   }
 }
@@ -263,9 +243,11 @@ void Conductor::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {
 // PeerConnectionClientObserver implementation.
 //
 
-void Conductor::OnSignedIn() {
+void Conductor::StartInvate() {
   RTC_LOG(LS_INFO) << __FUNCTION__;
-  main_wnd_->SwitchToPeerList(client_->peers());
+  //main_wnd_->SwitchToPeerList(client_->peers());
+
+  CreateInvate();
 }
 
 void Conductor::OnDisconnected() {
@@ -277,45 +259,48 @@ void Conductor::OnDisconnected() {
     main_wnd_->SwitchToConnectUI();
 }
 
-void Conductor::OnPeerConnected(int id, const std::string& name) {
+void Conductor::OnPeerConnected(std::string user_token, const std::string& name) {
   RTC_LOG(LS_INFO) << __FUNCTION__;
-  // Refresh the list if we're showing it.
-  if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
-    main_wnd_->SwitchToPeerList(client_->peers());
+
+  CreateInvate();
+
+  /*if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
+    main_wnd_->SwitchToPeerList(client_->peers());*/
 }
 
-void Conductor::OnPeerDisconnected(int id) {
+void Conductor::OnPeerDisconnected(std::string user_token) {
   RTC_LOG(LS_INFO) << __FUNCTION__;
-  if (id == peer_id_) {
+  if (user_token == client_->user_token()) {
     RTC_LOG(LS_INFO) << "Our peer disconnected";
     main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_CLOSED, NULL);
   } else {
     // Refresh the list if we're showing it.
-    if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
-      main_wnd_->SwitchToPeerList(client_->peers());
+    /*if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
+      main_wnd_->SwitchToPeerList(client_->peers());*/
   }
 }
 
-void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
-  RTC_DCHECK(peer_id_ == peer_id || peer_id_ == -1);
+void Conductor::OnMessageFromPeer(std::string user_token, const std::string& message) {
+  RTC_DCHECK(client_->user_token() == user_token || client_->user_token().size() > 0);
   RTC_DCHECK(!message.empty());
 
+  client_->peers().insert(user_token);
+
   if (!peer_connection_.get()) {
-    RTC_DCHECK(peer_id_ == -1);
-    peer_id_ = peer_id;
+    //user_token_ = user_token;
 
     if (!InitializePeerConnection()) {
       RTC_LOG(LS_ERROR) << "Failed to initialize our PeerConnection instance";
-      client_->SignOut();
+      //client_->SignOut();
       return;
     }
-  } else if (peer_id != peer_id_) {
-    RTC_DCHECK(peer_id_ != -1);
+  }
+  /*else if (user_token != user_token_) {
     RTC_LOG(LS_WARNING)
         << "Received a message from unknown peer while already in a "
            "conversation with a different peer.";
     return;
-  }
+  }*/
 
   Json::CharReaderBuilder factory;
   std::unique_ptr<Json::CharReader> reader =
@@ -338,7 +323,7 @@ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
       if (!ReinitializePeerConnectionForLoopback()) {
         RTC_LOG(LS_ERROR) << "Failed to initialize our PeerConnection instance";
         DeletePeerConnection();
-        client_->SignOut();
+        //client_->SignOut();
       }
       return;
     }
@@ -409,8 +394,10 @@ void Conductor::OnMessageSent(int err) {
 }
 
 void Conductor::OnServerConnectionFailure() {
-  main_wnd_->MessageBox("Error", ("Failed to connect to " + server_).c_str(),
-                        true);
+  /*main_wnd_->MessageBox("Error", ("Failed to connect to " + server_).c_str(),
+                        true);*/
+
+  RTC_LOG(LS_INFO) << " Failed to connect" << server_.c_str();
 }
 
 //
@@ -425,13 +412,11 @@ void Conductor::StartLogin(const std::string& server, int port) {
 }
 
 void Conductor::DisconnectFromServer() {
-  if (client_->is_connected())
-    client_->SignOut();
+  /*if (client_->is_connected())
+    client_->SignOut();*/
 }
 
-void Conductor::ConnectToPeer(int peer_id) {
-  RTC_DCHECK(peer_id_ == -1);
-  RTC_DCHECK(peer_id != -1);
+void Conductor::CreateInvate() {
 
   if (peer_connection_.get()) {
     main_wnd_->MessageBox(
@@ -440,45 +425,69 @@ void Conductor::ConnectToPeer(int peer_id) {
   }
 
   if (InitializePeerConnection()) {
-    peer_id_ = peer_id;
+    client_->user_token() = common::CrateUserToken();
+    client_->room_token() = common::CrateRoomToken();
+    std::string room_name = "webrtc - windows";
     peer_connection_->CreateOffer(
         this, webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
+
+    
+
+    std::map<std::string, std::string> params;
+    params.insert( {"broadcaster",  client_->user_token()});
+    params.insert({"roomToken", client_->room_token()});
+    params.insert({"roomName", room_name});
+
+    auto fn = [=](std::map<std::string, std::string> param_) {
+      client_->Broadcast(room_name, client_->room_token(), client_->user_token());
+    };
+
+    broadcast_timer_.start(fn ,
+      params, std::chrono::milliseconds(1000), [&] {
+      
+      });
+
   } else {
     main_wnd_->MessageBox("Error", "Failed to initialize PeerConnection", true);
   }
 }
+
 
 void Conductor::AddTracks() {
   if (!peer_connection_->GetSenders().empty()) {
     return;  // Already added tracks.
   }
 
+  rtc::scoped_refptr<webrtc::MediaStreamInterface> stream =
+      peer_connection_factory_->CreateLocalMediaStream(kStreamId);
+
   rtc::scoped_refptr<webrtc::AudioTrackInterface> audio_track(
       peer_connection_factory_->CreateAudioTrack(
           kAudioLabel,
           peer_connection_factory_->CreateAudioSource(cricket::AudioOptions())
               .get()));
-  auto result_or_error = peer_connection_->AddTrack(audio_track, {kStreamId});
-  if (!result_or_error.ok()) {
-    RTC_LOG(LS_ERROR) << "Failed to add audio track to PeerConnection: "
-                      << result_or_error.error().message();
+  stream->AddTrack(audio_track);
+  auto audios = stream->GetAudioTracks();
+
+
+   auto decoder = std::unique_ptr<webrtc::VideoDecoderFactory>(
+      new webrtc::MultiplexDecoderFactory(
+          std::make_unique<webrtc::InternalDecoderFactory>()));
+
+  auto videoSource = TrackSource<WindowCapturer>::Create("", {}, decoder);
+    rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track(
+        peer_connection_factory_->CreateVideoTrack(kVideoLabel, videoSource.get()));
+
+    stream->AddTrack(video_track);
+
+  auto videos = stream->GetVideoTracks();
+
+  if (!peer_connection_->AddTrack(*videos.begin(), {kStreamId}).ok()) {
+    RTC_LOG(LS_ERROR) << "Adding stream to PeerConnection failed";
   }
 
-  rtc::scoped_refptr<CapturerTrackSource> video_device =
-      CapturerTrackSource::Create();
-  if (video_device) {
-    rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track_(
-        peer_connection_factory_->CreateVideoTrack(kVideoLabel,
-                                                   video_device.get()));
-    main_wnd_->StartLocalRenderer(video_track_.get());
-
-    result_or_error = peer_connection_->AddTrack(video_track_, {kStreamId});
-    if (!result_or_error.ok()) {
-      RTC_LOG(LS_ERROR) << "Failed to add video track to PeerConnection: "
-                        << result_or_error.error().message();
-    }
-  } else {
-    RTC_LOG(LS_ERROR) << "OpenVideoCaptureDevice failed";
+  if (!peer_connection_->AddTrack(*audios.begin(), {kAudioLabel}).ok()) {
+    RTC_LOG(LS_ERROR) << "Adding audio to PeerConnection failed";
   }
 
   main_wnd_->SwitchToStreamingUI();
@@ -487,12 +496,12 @@ void Conductor::AddTracks() {
 void Conductor::DisconnectFromCurrentPeer() {
   RTC_LOG(LS_INFO) << __FUNCTION__;
   if (peer_connection_.get()) {
-    client_->SendHangUp(peer_id_);
+    client_->SendHangUp(client_->user_token());
     DeletePeerConnection();
   }
 
-  if (main_wnd_->IsWindow())
-    main_wnd_->SwitchToPeerList(client_->peers());
+  /*if (main_wnd_->IsWindow())
+    main_wnd_->SwitchToPeerList(client_->peers());*/
 }
 
 void Conductor::UIThreadCallback(int msg_id, void* data) {
@@ -503,7 +512,7 @@ void Conductor::UIThreadCallback(int msg_id, void* data) {
 
       if (main_wnd_->IsWindow()) {
         if (client_->is_connected()) {
-          main_wnd_->SwitchToPeerList(client_->peers());
+          //main_wnd_->SwitchToPeerList(client_->peers());
         } else {
           main_wnd_->SwitchToConnectUI();
         }
@@ -526,7 +535,7 @@ void Conductor::UIThreadCallback(int msg_id, void* data) {
         msg = pending_messages_.front();
         pending_messages_.pop_front();
 
-        if (!client_->SendToPeer(peer_id_, *msg) && peer_id_ != -1) {
+        if (!client_->SendToPeer(client_->user_token(), *msg) && client_->user_token().empty()) {
           RTC_LOG(LS_ERROR) << "SendToPeer failed";
           DisconnectFromServer();
         }
@@ -534,7 +543,7 @@ void Conductor::UIThreadCallback(int msg_id, void* data) {
       }
 
       if (!peer_connection_.get())
-        peer_id_ = -1;
+        client_->user_token_clear();
 
       break;
     }
@@ -597,3 +606,4 @@ void Conductor::SendMessage(const std::string& json_object) {
   std::string* msg = new std::string(json_object);
   main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
 }
+

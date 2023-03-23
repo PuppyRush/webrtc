@@ -16,7 +16,7 @@
 #include <string>
 
 #include "api/media_stream_interface.h"
-#include "api/video/video_frame.h"
+#include "api/media_stream_track.h"
 #include "examples/peerconnection/client/peer_connection_client.h"
 #include "media/base/media_channel.h"
 #include "media/base/video_common.h"
@@ -28,7 +28,7 @@ class MainWndCallback {
  public:
   virtual void StartLogin(const std::string& server, int port) = 0;
   virtual void DisconnectFromServer() = 0;
-  virtual void ConnectToPeer(int peer_id) = 0;
+  virtual void CreateInvate() = 0;
   virtual void DisconnectFromCurrentPeer() = 0;
   virtual void UIThreadCallback(int msg_id, void* data) = 0;
   virtual void Close() = 0;
@@ -42,9 +42,10 @@ class MainWindow {
  public:
   virtual ~MainWindow() {}
 
-  enum UI {
-    CONNECT_TO_SERVER,
-    LIST_PEERS,
+  enum class UI {
+    MAIN,
+    JOIN_ROOM,
+    CREATE_ROOM,
     STREAMING,
   };
 
@@ -58,7 +59,7 @@ class MainWindow {
   virtual UI current_ui() = 0;
 
   virtual void SwitchToConnectUI() = 0;
-  virtual void SwitchToPeerList(const Peers& peers) = 0;
+  //virtual void SwitchToPeerList(const Peers& peers) = 0;
   virtual void SwitchToStreamingUI() = 0;
 
   virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video) = 0;
@@ -90,19 +91,20 @@ class MainWnd : public MainWindow {
   virtual void RegisterObserver(MainWndCallback* callback);
   virtual bool IsWindow();
   virtual void SwitchToConnectUI();
-  virtual void SwitchToPeerList(const Peers& peers);
+  //virtual void SwitchToPeerList(const Peers& peers);
   virtual void SwitchToStreamingUI();
   virtual void MessageBox(const char* caption, const char* text, bool is_error);
   virtual UI current_ui() { return ui_; }
 
-  virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video);
+   virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video) override;
   virtual void StopLocalRenderer();
-  virtual void StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video);
+  virtual void StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) override;
   virtual void StopRemoteRenderer();
 
   virtual void QueueUIThreadCallback(int msg_id, void* data);
 
   HWND handle() const { return wnd_; }
+
 
   class VideoRenderer : public rtc::VideoSinkInterface<webrtc::VideoFrame> {
    public:
@@ -111,25 +113,19 @@ class MainWnd : public MainWindow {
                   int height,
                   webrtc::VideoTrackInterface* track_to_render);
     virtual ~VideoRenderer();
-
     void Lock() { ::EnterCriticalSection(&buffer_lock_); }
-
     void Unlock() { ::LeaveCriticalSection(&buffer_lock_); }
-
     // VideoSinkInterface implementation
     void OnFrame(const webrtc::VideoFrame& frame) override;
-
     const BITMAPINFO& bmi() const { return bmi_; }
     const uint8_t* image() const { return image_.get(); }
 
    protected:
     void SetSize(int width, int height);
-
     enum {
       SET_SIZE,
       RENDER_FRAME,
     };
-
     HWND wnd_;
     BITMAPINFO bmi_;
     std::unique_ptr<uint8_t[]> image_;
@@ -188,9 +184,11 @@ class MainWnd : public MainWindow {
   DWORD ui_thread_id_;
   HWND edit1_;
   HWND edit2_;
+  HWND edit_roomNumber_;
   HWND label1_;
   HWND label2_;
-  HWND button_;
+  HWND join_button_;
+  HWND create_button_;
   HWND listbox_;
   bool destroyed_;
   void* nested_msg_;

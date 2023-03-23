@@ -23,6 +23,8 @@
 #include "examples/peerconnection/client/peer_connection_client.h"
 #include "rtc_base/thread.h"
 
+#include "common.h"
+
 namespace webrtc {
 class VideoCaptureModule;
 }  // namespace webrtc
@@ -85,15 +87,15 @@ class Conductor : public webrtc::PeerConnectionObserver,
   // PeerConnectionClientObserver implementation.
   //
 
-  void OnSignedIn() override;
+  void StartInvate() override;
 
   void OnDisconnected() override;
 
-  void OnPeerConnected(int id, const std::string& name) override;
+  void OnPeerConnected(std::string user_token, const std::string& name) override;
 
-  void OnPeerDisconnected(int id) override;
+  void OnPeerDisconnected(std::string user_token) override;
 
-  void OnMessageFromPeer(int peer_id, const std::string& message) override;
+  void OnMessageFromPeer(std::string user_token, const std::string& message) override;
 
   void OnMessageSent(int err) override;
 
@@ -107,7 +109,7 @@ class Conductor : public webrtc::PeerConnectionObserver,
 
   void DisconnectFromServer() override;
 
-  void ConnectToPeer(int peer_id) override;
+  void CreateInvate() override;
 
   void DisconnectFromCurrentPeer() override;
 
@@ -116,13 +118,14 @@ class Conductor : public webrtc::PeerConnectionObserver,
   // CreateSessionDescriptionObserver implementation.
   void OnSuccess(webrtc::SessionDescriptionInterface* desc) override;
   void OnFailure(webrtc::RTCError error) override;
+  
 
  protected:
   // Send a message to the remote peer.
   void SendMessage(const std::string& json_object);
 
-  int peer_id_;
   bool loopback_;
+  timer::Timer broadcast_timer_;
   std::unique_ptr<rtc::Thread> signaling_thread_;
   rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
   rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>

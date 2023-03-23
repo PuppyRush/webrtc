@@ -36,7 +36,7 @@ ABSL_FLAG(
     "--force_fieldtrials=WebRTC-FooFeature/Enabled/ "
     "will assign the group Enabled to field trial WebRTC-FooFeature. Multiple "
     "trials are separated by \"/\"");
-ABSL_FLAG(int, port, 8888, "default: 8888");
+ABSL_FLAG(int, port, 9559, "default: 9559");
 
 static const size_t kMaxConnections = (FD_SETSIZE - 2);
 
@@ -119,6 +119,7 @@ int main(int argc, char* argv[]) {
       bool socket_done = true;
       if (FD_ISSET(s->socket(), &socket_set)) {
         if (s->OnDataAvailable(&socket_done) && s->request_received()) {
+          printf("recv----->\n%s\n<------\n", s->data().c_str());
           ChannelMember* member = clients.Lookup(s);
           if (member || PeerChannel::IsPeerConnection(s)) {
             if (!member) {

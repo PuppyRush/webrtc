@@ -26,6 +26,13 @@
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/string_utils.h"  // For ToUtf8
 #include "rtc_base/win32_socket_init.h"
+#include "rtc_base/openssl_adapter.h"
+#include "rtc_base/socket_io.h"
+
+#include "sio_client.h"
+#include "sio_message.h"
+
+#include "defaults.h"
 #include "system_wrappers/include/field_trial.h"
 #include "test/field_trial.h"
 
@@ -68,13 +75,74 @@ WindowsCommandLineArguments::WindowsCommandLineArguments() {
   LocalFree(wide_argv);
 }
 
-}  // namespace
+
+class CustomSocketServer : public rtc::PhysicalSocketServer {
+ public:
+
+    bool Wait(webrtc::TimeDelta max_wait_duration, bool process_io) override {
+    if (!process_io)
+        return true;
+    return rtc::PhysicalSocketServer::Wait(webrtc::TimeDelta::Zero(),
+                                            process_io);
+    }
+
+    void setOpensslOption(rtc::SSLAdapterFactory* f) {
+      f->SetIgnoreBadCert(true);
+      f->SetRole(rtc::SSLRole::SSL_CLIENT);
+      f->SetMode(rtc::SSLMode::SSL_MODE_TLS);
+    }
+
+    std::vector<rtc::SSLAdapterFactory*> ary;
+
+    rtc::SSLAdapterFactory* getNewFactory() {
+      ary.emplace_back( new rtc::OpenSSLAdapterFactory);
+      return ary.back();
+    }
+
+    virtual rtc::Socket* CreateSocket(int family, int type) override {
+        rtc::SocketDispatcher* dispatcher = new rtc::SocketDispatcher(this);
+
+        if (dispatcher->Create(family, type)) {
+          return new rtc::SocketIOAdapter(dispatcher);
+          
+          auto fac = getNewFactory();
+          setOpensslOption(fac);
+          auto adapter = fac->CreateAdapter(dispatcher);
+          adapter->StartSSL("127.0.0.1:9559");
+          return adapter;
+        } else {
+          delete dispatcher;
+          return nullptr;
+        }
+      }
+};
+
+}
+
+
+
 int PASCAL wWinMain(HINSTANCE instance,
                     HINSTANCE prev_instance,
                     wchar_t* cmd_line,
                     int cmd_show) {
+  
+  auto file = new CustomnLogSink("C:\\webrtc\\main.txt");
+  rtc::LogMessage::AddLogToStream(file, rtc::LS_VERBOSE);
+  //rtc::LogMessage::LogToDebug(rtc::LS_VERBOSE);
+
+  
+#ifdef SIO_TLS
+  RTC_LOG(LS_VERBOSE) << "SIO_TLS ON";
+#endif
+
+  RTC_LOG(LS_VERBOSE) << "start webrtc app";
+
+
   rtc::WinsockInitializer winsock_init;
-  rtc::PhysicalSocketServer ss;
+  
+ // rtc::InitializeSSL();
+
+  CustomSocketServer ss;
   rtc::AutoSocketServerThread main_thread(&ss);
 
   WindowsCommandLineArguments win_args;
@@ -96,7 +164,8 @@ int PASCAL wWinMain(HINSTANCE instance,
     return -1;
   }
 
-  const std::string server = absl::GetFlag(FLAGS_server);
+  //const std::string server = absl::GetFlag(FLAGS_server);
+  const std::string server = "127.0.0.1";
   MainWnd wnd(server.c_str(), absl::GetFlag(FLAGS_port),
               absl::GetFlag(FLAGS_autoconnect), absl::GetFlag(FLAGS_autocall));
   if (!wnd.Create()) {
@@ -104,11 +173,11 @@ int PASCAL wWinMain(HINSTANCE instance,
     return -1;
   }
 
-  rtc::InitializeSSL();
-  PeerConnectionClient client;
+  auto& client = PeerConnectionClient::instance();
   auto conductor = rtc::make_ref_counted<Conductor>(&client, &wnd);
 
   // Main loop.
+  main_thread.Start();
   MSG msg;
   BOOL gm;
   while ((gm = ::GetMessage(&msg, NULL, 0, 0)) != 0 && gm != -1) {
@@ -128,6 +197,6 @@ int PASCAL wWinMain(HINSTANCE instance,
     }
   }
 
-  rtc::CleanupSSL();
+ // rtc::CleanupSSL();
   return 0;
 }
